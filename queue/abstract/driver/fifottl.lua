@@ -33,6 +33,10 @@ local function is_expired(task)
     return (dead_event <= fiber.time64())
 end
 
+local function mk_ai_space_name(space)
+    return space.name .. '_ai'
+end
+
 -- create space
 function tube.create_space(space_name, opts)
     opts.ttl = opts.ttl or TIMEOUT_INFINITY
@@ -53,6 +57,12 @@ function tube.create_space(space_name, opts)
     space:create_index('watch',
         { type = 'tree', parts = { i_status, 'str', i_next_event, 'num' },
             unique = false})
+
+    local ai_space = box.schema.create_space(mk_ai_space_name(space), space_opts)
+    ai_space:create_index('primary', { unique = true, parts = { 1, 'num' }})
+
+    ai_space:insert({ 0, 0 }) -- insert default task_id
+
     return space
 end
 
@@ -62,6 +72,7 @@ function tube.new(space, on_task_change, opts)
     on_task_change = on_task_change or (function() end)
     local self = setmetatable({
         space           = space,
+        ai_space        = box.space[mk_ai_space_name(space)],
         on_task_change  = function(self, task, stats_data)
             -- wakeup fiber
             if task ~= nil then
@@ -156,8 +167,7 @@ end
 
 -- put task in space
 function method.put(self, data, opts)
-    local max = self.space.index.task_id:max()
-    local id = max and max[i_id] + 1 or 0
+    local id = self.ai_space:inc(0)
 
     local status
     local ttl = opts.ttl or self.opts.ttl
